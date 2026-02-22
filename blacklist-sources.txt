@@ -1,3 +1,4 @@
 https://gitlab.com/hagezi/mirror/-/raw/main/dns-blocklists/wildcard/pro-onlydomains.txt
 https://gitlab.com/hagezi/mirror/-/raw/main/dns-blocklists/wildcard/tif.medium-onlydomains.txt
 https://badmojr.github.io/1Hosts/Lite/domains.txt
+https://raw.githubusercontent.com/lint1995/adblockfilters/refs/heads/main/blacklist_domain.txt
