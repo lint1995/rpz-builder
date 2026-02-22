@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
-WORK=work
-OUT=public
-TMP=$WORK/tmp
+set -eo pipefail   # removed -u to prevent unset var crash
 
-mkdir -p "$WORK" "$OUT" "$TMP"
+WORK="work"
+OUT="public"
+TMP="$WORK/tmp"
 
-# Safe empty file creator
+mkdir -p "$TMP"
+mkdir -p "$OUT"
+
 safe_empty() {
-    : > "$1"
+    touch "$1"
 }
 
 fetch_list() {
 
-    local sources_file="$1"
-    local output_file="$2"
+    local src="$1"
+    local dst="$2"
 
-    safe_empty "$output_file"
+    safe_empty "$dst"
 
-    # If sources file missing or empty, exit cleanly
-    [ -f "$sources_file" ] || return 0
-    [ -s "$sources_file" ] || return 0
+    if [ ! -f "$src" ]; then
+        echo "INFO: $src not found, skipping"
+        return 0
+    fi
+
+    if [ ! -s "$src" ]; then
+        echo "INFO: $src empty, skipping"
+        return 0
+    fi
 
     while read -r url; do
 
@@ -29,53 +36,60 @@ fetch_list() {
 
         echo "Downloading $url"
 
-        if curl -fsSL "$url" >> "$output_file"; then
-            echo >> "$output_file"
+        if curl -fL --connect-timeout 30 --max-time 300 "$url" >> "$dst"; then
+            echo >> "$dst"
         else
-            echo "WARNING: failed to download $url"
+            echo "WARNING: failed $url"
         fi
 
-    done < "$sources_file"
+    done < "$src"
+
 }
 
 extract_domains() {
 
-    grep -v '^#' 2>/dev/null || true
-} | grep -v '^!' \
-  | grep -v '^@' \
-  | sed 's/\r//' \
-  | sed 's/^0.0.0.0 //' \
-  | sed 's/^127.0.0.1 //' \
-  | sed 's/^::1 //' \
-  | awk '{print $1}' \
-  | sed 's/^\.//' \
-  | sed '/^$/d' \
-  | grep -v localhost \
-  | sort -u
+    sed 's/\r//g' \
+    | grep -v '^#' \
+    | grep -v '^!' \
+    | grep -v '^@' \
+    | sed 's/^0.0.0.0 //' \
+    | sed 's/^127.0.0.1 //' \
+    | sed 's/^::1 //' \
+    | awk '{print $1}' \
+    | sed 's/^\.//' \
+    | grep -v '^$' \
+    | grep -v localhost \
+    | sort -u
 
-echo "== Download blacklist =="
+}
 
-fetch_list blacklist-sources.txt "$TMP/black_raw.txt"
+echo "==== BLACKLIST ===="
 
-extract_domains < "$TMP/black_raw.txt" > "$TMP/black.txt" || safe_empty "$TMP/black.txt"
+fetch_list "blacklist-sources.txt" "$TMP/black_raw.txt"
 
-echo "Blacklist: $(wc -l < "$TMP/black.txt")"
+safe_empty "$TMP/black.txt"
 
-echo "== Download whitelist =="
+extract_domains < "$TMP/black_raw.txt" > "$TMP/black.txt" || true
 
-fetch_list whitelist-sources.txt "$TMP/white_raw.txt"
+echo "Blacklist count: $(wc -l < "$TMP/black.txt")"
 
-extract_domains < "$TMP/white_raw.txt" > "$TMP/white.txt" || safe_empty "$TMP/white.txt"
+echo "==== WHITELIST ===="
 
-echo "Whitelist: $(wc -l < "$TMP/white.txt")"
+fetch_list "whitelist-sources.txt" "$TMP/white_raw.txt"
 
-echo "== Apply whitelist =="
+safe_empty "$TMP/white.txt"
+
+extract_domains < "$TMP/white_raw.txt" > "$TMP/white.txt" || true
+
+echo "Whitelist count: $(wc -l < "$TMP/white.txt")"
+
+echo "==== FILTER ===="
 
 if [ -s "$TMP/white.txt" ]; then
 
     comm -23 \
-        "$TMP/black.txt" \
-        "$TMP/white.txt" \
+        <(sort "$TMP/black.txt") \
+        <(sort "$TMP/white.txt") \
         > "$TMP/filtered.txt"
 
 else
@@ -84,43 +98,42 @@ else
 
 fi
 
-echo "Filtered: $(wc -l < "$TMP/filtered.txt")"
+echo "Filtered count: $(wc -l < "$TMP/filtered.txt")"
 
-echo "== Download wildcards =="
+echo "==== WILDCARD ===="
 
-fetch_list wildcard-sources.txt "$TMP/wild_raw.txt"
+fetch_list "wildcard-sources.txt" "$TMP/wild_raw.txt"
 
-extract_domains < "$TMP/wild_raw.txt" > "$TMP/wild.txt" || safe_empty "$TMP/wild.txt"
+safe_empty "$TMP/wild.txt"
 
-echo "Wildcards: $(wc -l < "$TMP/wild.txt")"
-
-echo "== Expand wildcards =="
+extract_domains < "$TMP/wild_raw.txt" > "$TMP/wild.txt" || true
 
 safe_empty "$TMP/wild_expanded.txt"
 
 if [ -s "$TMP/wild.txt" ]; then
 
-    while read -r domain; do
-        echo "$domain"
-        echo "*.$domain"
+    while read -r d; do
+        echo "$d"
+        echo "*.$d"
     done < "$TMP/wild.txt" | sort -u > "$TMP/wild_expanded.txt"
 
 fi
 
-echo "== Combine final list =="
+echo "Wildcard count: $(wc -l < "$TMP/wild.txt")"
+
+echo "==== FINAL ===="
 
 cat \
     "$TMP/filtered.txt" \
     "$TMP/wild_expanded.txt" \
-    2>/dev/null \
     | sort -u \
     > "$TMP/final.txt"
 
 COUNT=$(wc -l < "$TMP/final.txt")
 
-echo "Final count: $COUNT"
+echo "Final domains: $COUNT"
 
-echo "== Generate serial =="
+echo "==== BUILD RPZ ===="
 
 SERIAL=$(date +%Y%m%d%H)
 
@@ -128,33 +141,33 @@ RPZ="$OUT/rpz.zone"
 
 cat > "$RPZ" <<EOF
 \$TTL 2h
-@   IN SOA localhost. root.localhost. (
-        $SERIAL
-        1h
-        15m
-        30d
-        2h )
-    IN NS localhost.
+@ IN SOA localhost. root.localhost. (
+    $SERIAL
+    1h
+    15m
+    30d
+    2h )
+  IN NS localhost.
 
 EOF
 
-awk '{print $0 " CNAME ."}' "$TMP/final.txt" >> "$RPZ"
+if [ -s "$TMP/final.txt" ]; then
+    awk '{print $0 " CNAME ."}' "$TMP/final.txt" >> "$RPZ"
+fi
 
-echo "== Additional formats =="
+echo "==== OTHER FORMATS ===="
 
 cp "$TMP/final.txt" "$OUT/domains.txt"
 
-awk '{print "0.0.0.0 "$0}' \
-"$TMP/final.txt" > "$OUT/hosts.txt"
+awk '{print "0.0.0.0 "$0}' "$TMP/final.txt" > "$OUT/hosts.txt"
+
+awk '{print "address=/"$0"/0.0.0.0"}' "$TMP/final.txt" > "$OUT/dnsmasq.conf"
 
 awk '{print "local-zone: \""$0"\" always_nxdomain"}' \
 "$TMP/final.txt" > "$OUT/unbound.conf"
 
-awk '{print "address=/"$0"/0.0.0.0"}' \
-"$TMP/final.txt" > "$OUT/dnsmasq.conf"
+echo "==== COMPRESS ===="
 
-echo "== Compress =="
+gzip -kf "$OUT"/* || true
 
-gzip -kf "$OUT"/*
-
-echo "== COMPLETE SUCCESSFULLY =="
+echo "==== SUCCESS ===="
