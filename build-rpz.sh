@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -eo pipefail
 
 WORK="work"
@@ -9,15 +8,12 @@ TMP="$WORK/tmp"
 mkdir -p "$TMP"
 mkdir -p "$OUT"
 
-safe_empty() {
-    touch "$1"
-}
+safe_empty() { touch "$1"; }
 
 # Download remote sources
 fetch_list() {
     local src="$1"
     local dst="$2"
-
     safe_empty "$dst"
 
     if [ ! -f "$src" ] || [ ! -s "$src" ]; then
@@ -36,7 +32,7 @@ fetch_list() {
     done < "$src"
 }
 
-# Extract clean domains from hosts files
+# Extract clean domains
 extract_domains() {
     sed 's/\r//g' \
     | grep -v '^#' \
@@ -52,43 +48,17 @@ extract_domains() {
     | LC_ALL=C sort -u
 }
 
-# Expand whitelist to include apex + wildcard form
+# Expand whitelist to include apex + wildcard
 expand_whitelist() {
     local input="$1"
     local output="$2"
     safe_empty "$output"
-
-    if [ ! -s "$input" ]; then return 0; fi
+    [ ! -s "$input" ] && return 0
 
     while read -r domain; do
         echo "$domain"
         echo "*.$domain"
     done < "$input" | LC_ALL=C sort -u > "$output"
-}
-
-# Filter blacklist using suffix match against whitelist
-filter_blacklist_with_whitelist_suffix() {
-    local blacklist="$1"
-    local whitelist="$2"
-    local output="$3"
-
-    safe_empty "$output"
-
-    if [ ! -s "$whitelist" ]; then
-        cp "$blacklist" "$output"
-        return
-    fi
-
-    awk '
-    NR==FNR {w[$0]; next}
-    {
-        d=$0
-        skip=0
-        for (i in w) {
-            if(d==i || d ~ ("\\." i "$")) skip=1
-        }
-        if(!skip) print d
-    }' "$whitelist" "$blacklist" | LC_ALL=C sort -u > "$output"
 }
 
 echo "==== BLACKLIST ===="
@@ -107,8 +77,12 @@ echo "==== EXPAND WHITELIST ===="
 expand_whitelist "$TMP/white.txt" "$TMP/white_expanded.txt"
 echo "Expanded whitelist count: $(wc -l < "$TMP/white_expanded.txt")"
 
-echo "==== FILTER BLACKLIST ===="
-filter_blacklist_with_whitelist_suffix "$TMP/black.txt" "$TMP/white.txt" "$TMP/filtered.txt"
+echo "==== FILTER BLACKLIST (FAST) ===="
+if [ -s "$TMP/white_expanded.txt" ]; then
+    grep -Fvxf "$TMP/white_expanded.txt" "$TMP/black.txt" | LC_ALL=C sort -u > "$TMP/filtered.txt"
+else
+    cp "$TMP/black.txt" "$TMP/filtered.txt"
+fi
 echo "Filtered count: $(wc -l < "$TMP/filtered.txt")"
 
 echo "==== WILDCARD ===="
@@ -155,14 +129,14 @@ fi
 # Ensure final newline
 echo "" >> "$RPZ_TMP"
 
-# Minimum size check to avoid "masterfile too small"
+# Minimum size check
 SIZE=$(wc -c < "$RPZ_TMP")
 if [ "$SIZE" -lt 100 ]; then
     echo "ERROR: RPZ file too small ($SIZE bytes), stopping"
     exit 1
 fi
 
-# Optional BIND validation
+# Optional validation
 if command -v named-checkzone >/dev/null 2>&1; then
     named-checkzone rpz.local "$RPZ_TMP"
 fi
