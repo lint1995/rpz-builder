@@ -1,1 +1,2 @@
 https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/whitelist-referral.txt
+https://raw.githubusercontent.com/lint1995/adblockfilters/refs/heads/main/whitelist_domain.txt
