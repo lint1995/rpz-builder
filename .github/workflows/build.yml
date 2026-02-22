@@ -1,0 +1,48 @@
+name: Build RPZ
+
+on:
+
+  schedule:
+    - cron: "0 21 * * *"
+
+  workflow_dispatch:
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+    - uses: actions/checkout@v4
+
+    - name: Install bind tools
+      run: sudo apt-get update && sudo apt-get install -y bind9-dnsutils bind9-utils
+
+    - name: Build RPZ
+      run: |
+        chmod +x build-rpz.sh
+        ./build-rpz.sh
+
+    - name: Validate RPZ
+      run: |
+        chmod +x validate-rpz.sh
+        ./validate-rpz.sh
+
+    - name: Deploy GitHub Pages
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./public
+
+    - name: Commit raw files
+      run: |
+        git config user.name github-actions
+        git config user.email actions@github.com
+        git add public/
+        git commit -m "Update RPZ" || exit 0
+        git push
