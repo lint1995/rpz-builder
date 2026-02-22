@@ -101,8 +101,26 @@ echo "Wildcard count: $(wc -l < "$TMP/wild.txt")"
 
 echo "==== FINAL MERGE ===="
 cat "$TMP/filtered.txt" "$TMP/wild_expanded.txt" | LC_ALL=C sort -u > "$TMP/final.txt"
+
+echo "==== CLEAN SUBDOMAINS IF PARENT EXISTS ===="
+awk '
+{
+    d=$0
+    keep=1
+    n=split(d, parts, "\\.")
+    for(i=2;i<=n;i++){
+        parent=""
+        for(j=i;j<=n;j++){
+            parent=parent?parent"."parts[j]:parts[j]
+        }
+        if(parent in seen){keep=0; break}
+    }
+    if(keep){seen[d]=1; print d}
+}' "$TMP/final.txt" > "$TMP/final_cleaned.txt"
+
+mv "$TMP/final_cleaned.txt" "$TMP/final.txt"
 COUNT=$(wc -l < "$TMP/final.txt")
-echo "Final domains: $COUNT"
+echo "Final domains after cleanup: $COUNT"
 
 echo "==== BUILD RPZ SAFELY ===="
 SERIAL=$(date +%Y%m%d%H)
